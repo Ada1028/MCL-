@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>我的待办清单</title>
+  <style>
+    :root { color-scheme: light; --bg:#f3f6fb; --card:#fff; --text:#172033; --muted:#718096; --line:#e5eaf2; --primary:#4f46e5; --primary-dark:#3730a3; --danger:#dc2626; }
+    * { box-sizing:border-box; }
+    body { margin:0; min-height:100vh; font-family:system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif; color:var(--text); background:linear-gradient(135deg,#eef2ff,var(--bg) 45%,#ecfeff); }
+    .container { width:min(760px,calc(100% - 32px)); margin:0 auto; padding:56px 0 40px; }
+    .hero { margin-bottom:24px; }
+    h1 { margin:0 0 8px; font-size:clamp(2rem,5vw,3rem); letter-spacing:-.04em; }
+    .hero p { margin:0; color:var(--muted); }
+    .card { background:rgba(255,255,255,.94); border:1px solid rgba(229,234,242,.9); border-radius:20px; box-shadow:0 18px 50px rgba(31,41,55,.08); }
+    .composer { display:flex; gap:10px; padding:16px; }
+    input,button { font:inherit; }
+    input[type="text"] { min-width:0; flex:1; padding:13px 15px; border:1px solid var(--line); border-radius:12px; outline:0; color:var(--text); background:#fff; }
+    input[type="text"]:focus { border-color:var(--primary); box-shadow:0 0 0 4px rgba(79,70,229,.12); }
+    button { border:0; cursor:pointer; }
+    .add-btn { padding:0 20px; border-radius:12px; color:#fff; background:var(--primary); font-weight:700; }
+    .add-btn:hover { background:var(--primary-dark); }
+    .toolbar { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:18px 20px 12px; }
+    .filters { display:flex; gap:6px; flex-wrap:wrap; }
+    .filter { padding:7px 11px; border-radius:8px; color:var(--muted); background:transparent; }
+    .filter:hover,.filter.active { color:var(--primary); background:#eef2ff; font-weight:700; }
+    .clear-btn { padding:7px 0; color:var(--danger); background:transparent; font-size:.9rem; }
+    .clear-btn:disabled { color:#b9c0ca; cursor:not-allowed; }
+    .list { list-style:none; padding:0 16px 16px; margin:0; }
+    .todo { display:flex; align-items:center; gap:12px; padding:14px 8px; border-top:1px solid var(--line); }
+    .todo:first-child { border-top:0; }
+    .check { width:20px; height:20px; flex:0 0 auto; accent-color:var(--primary); cursor:pointer; }
+    .todo-text { flex:1; min-width:0; overflow-wrap:anywhere; }
+    .todo.completed .todo-text { color:var(--muted); text-decoration:line-through; }
+    .delete-btn { padding:6px 8px; border-radius:7px; color:var(--muted); background:transparent; opacity:0; }
+    .todo:hover .delete-btn,.delete-btn:focus { opacity:1; }
+    .delete-btn:hover { color:var(--danger); background:#fef2f2; }
+    .empty { padding:38px 20px; color:var(--muted); text-align:center; }
+    .stats { padding:0 20px 20px; color:var(--muted); font-size:.9rem; }
+    .status { min-height:24px; margin-top:12px; color:var(--primary-dark); font-size:.9rem; }
+    @media (max-width:520px) { .container { padding-top:32px; } .composer { flex-direction:column; } .add-btn { min-height:46px; } .toolbar { align-items:flex-start; flex-direction:column; } .delete-btn { opacity:1; } }
+  </style>
+</head>
+<body>
+  <main class="container">
+    <header class="hero">
+      <h1>我的待办</h1>
+      <p>简单记录每一件要完成的事，数据自动保存在本机。</p>
+    </header>
+    <section class="card" aria-label="待办事项应用">
+      <form class="composer" id="todoForm">
+        <label class="sr-only" for="todoInput">输入待办事项</label>
+        <input id="todoInput" type="text" maxlength="200" placeholder="接下来要做什么？" autocomplete="off" required>
+        <button class="add-btn" type="submit">添加</button>
+      </form>
+      <div class="toolbar">
+        <div class="filters" role="group" aria-label="筛选待办事项">
+          <button class="filter active" type="button" data-filter="all">全部</button>
+          <button class="filter" type="button" data-filter="active">未完成</button>
+          <button class="filter" type="button" data-filter="completed">已完成</button>
+        </div>
+        <button class="clear-btn" id="clearCompleted" type="button">清除已完成</button>
+      </div>
+      <ul class="list" id="todoList"></ul>
+      <div class="stats" id="stats"></div>
+    </section>
+    <div class="status" id="status" role="status" aria-live="polite"></div>
+  </main>
+  <script>
+    const STORAGE_KEY = 'mcl-todo-list-v1';
+    const form = document.querySelector('#todoForm');
+    const input = document.querySelector('#todoInput');
+    const list = document.querySelector('#todoList');
+    const stats = document.querySelector('#stats');
+    const status = document.querySelector('#status');
+    const clearCompleted = document.querySelector('#clearCompleted');
+    let filter = 'all';
+    let todos = loadTodos();
+
+    function loadTodos() {
+      try {
+        const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
+        return Array.isArray(saved) ? saved.filter(item => item && typeof item.text === 'string') : [];
+      } catch (_) { return []; }
+    }
+
+    function saveTodos() {
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(todos)); }
+      catch (_) { showStatus('无法保存到本地存储，请检查浏览器设置。'); }
+    }
+
+    function showStatus(message) {
+      status.textContent = message;
+      window.clearTimeout(showStatus.timer);
+      showStatus.timer = window.setTimeout(() => { status.textContent = ''; }, 2400);
+    }
+
+    function visibleTodos() {
+      if (filter === 'active') return todos.filter(todo => !todo.completed);
+      if (filter === 'completed') return todos.filter(todo => todo.completed);
+      return todos;
+    }
+
+    function render() {
+      const visible = visibleTodos();
+      list.innerHTML = '';
+      if (!visible.length) {
+        const empty = document.createElement('li');
+        empty.className = 'empty';
+        empty.textContent = filter === 'all' ? '还没有待办事项，添加第一项吧。' : '这里暂时没有事项。';
+        list.appendChild(empty);
+      } else {
+        visible.forEach(todo => {
+          const item = document.createElement('li');
+          item.className = `todo${todo.completed ? ' completed' : ''}`;
+          item.dataset.id = todo.id;
+          item.innerHTML = `<input class="check" type="checkbox" ${todo.completed ? 'checked' : ''} aria-label="标记完成">
+            <span class="todo-text"></span><button class="delete-btn" type="button" aria-label="删除待办">删除</button>`;
+          item.querySelector('.todo-text').textContent = todo.text;
+          list.appendChild(item);
+        });
+      }
+      const remaining = todos.filter(todo => !todo.completed).length;
+      stats.textContent = `共 ${todos.length} 项 · ${remaining} 项未完成`;
+      clearCompleted.disabled = !todos.some(todo => todo.completed);
+      document.querySelectorAll('.filter').forEach(button => button.classList.toggle('active', button.dataset.filter === filter));
+    }
+
+    form.addEventListener('submit', event => {
+      event.preventDefault();
+      const text = input.value.trim();
+      if (!text) return;
+      todos.unshift({ id: `${Date.now()}-${Math.random().toString(16).slice(2)}`, text, completed: false });
+      saveTodos(); render(); input.value = ''; input.focus(); showStatus('待办事项已添加');
+    });
+
+    document.querySelector('.filters').addEventListener('click', event => {
+      const button = event.target.closest('[data-filter]');
+      if (!button) return;
+      filter = button.dataset.filter; render();
+    });
+
+    list.addEventListener('change', event => {
+      const item = event.target.closest('.todo');
+      if (!item) return;
+      const todo = todos.find(entry => entry.id === item.dataset.id);
+      if (todo) { todo.completed = event.target.checked; saveTodos(); render(); showStatus(todo.completed ? '已标记完成' : '已恢复为未完成'); }
+    });
+
+    list.addEventListener('click', event => {
+      const button = event.target.closest('.delete-btn');
+      if (!button) return;
+      const item = button.closest('.todo');
+      todos = todos.filter(todo => todo.id !== item.dataset.id);
+      saveTodos(); render(); showStatus('待办事项已删除');
+    });
+
+    clearCompleted.addEventListener('click', () => {
+      todos = todos.filter(todo => !todo.completed);
+      saveTodos(); render(); showStatus('已清除完成事项');
+    });
+
+    render();
+  </script>
+</body>
+</html>
